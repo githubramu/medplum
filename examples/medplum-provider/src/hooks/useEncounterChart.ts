@@ -24,7 +24,9 @@ export interface EncounterChartHook {
 }
 
 export function useEncounterChart(patientId?: string, encounterId?: string): EncounterChartHook {
+  debugger;
   const medplum = useMedplum();
+  console.log("enc id, pat id", patientId, encounterId)
 
   // States
   const [encounter, setEncounter] = useState<Encounter | undefined>();

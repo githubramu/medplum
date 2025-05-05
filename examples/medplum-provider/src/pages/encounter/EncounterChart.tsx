@@ -1,4 +1,4 @@
-import { Stack, Box, Card, Text, Group, Flex, TextInput, Button, Menu, Textarea } from '@mantine/core';
+import { Stack, Box, Card, Text, Group, Flex, TextInput, Button, Menu, Textarea, Modal } from '@mantine/core';
 import {
   Task,
   ClinicalImpression,
@@ -14,7 +14,7 @@ import {
 } from '@medplum/fhirtypes';
 import { CodeableConceptInput, Loading, useMedplum } from '@medplum/react';
 import { Outlet, useParams } from 'react-router';
-import { IconCircleCheck, IconCircleOff, IconDownload, IconFileText, IconSend } from '@tabler/icons-react';
+import { IconCircleCheck, IconCircleOff, IconDownload, IconFileText, IconSend, IconRobot } from '@tabler/icons-react';
 import { TaskPanel } from '../components/Task/TaskPanel';
 import { EncounterHeader } from '../components/Encounter/EncounterHeader';
 import { usePatient } from '../../hooks/usePatient';
@@ -33,6 +33,8 @@ import { createSelfPayCoverage } from '../../utils/coverage';
 
 export const EncounterChart = (): JSX.Element => {
   const { patientId, encounterId } = useParams();
+  debugger;
+  console.log("patientid, encounterid", patientId, encounterId);
   const medplum = useMedplum();
   const patient = usePatient();
   const saveTimeoutRef = useRef<ReturnType<typeof setTimeout>>();
@@ -54,7 +56,9 @@ export const EncounterChart = (): JSX.Element => {
     setChargeItems,
   } = useEncounterChart(patientId, encounterId);
   const [chartNote, setChartNote] = useState<string | undefined>(clinicalImpression?.note?.[0]?.text);
-
+  const [isAiNoteModalOpen, setIsAiNoteModalOpen] = useState(false);
+  const [isUpdating, setIsUpdating] = useState(false);
+  debugger;
   useEffect(() => {
     if (claim?.diagnosis) {
       const mergedCoding = claim.diagnosis.reduce<Coding[]>((acc, diag) => {
@@ -337,6 +341,86 @@ export const EncounterChart = (): JSX.Element => {
       : undefined;
   };
 
+  const handleAiNoteClick = useCallback(() => {
+    setIsAiNoteModalOpen(true);
+  }, []);
+
+  const handleAiNoteClose = useCallback(() => {
+    setIsAiNoteModalOpen(false);
+  }, []);
+
+  const handleAiNoteSubmit = useCallback(async (aiNoteData: any) => {
+    try {
+      if (typeof aiNoteData === 'object' && aiNoteData !== null) {
+        setIsUpdating(true);
+        showNotification({
+          title: 'Updating Note',
+          message: 'Processing AI-generated note...',
+          color: 'blue',
+        });
+
+        // Use executeBatch for handling bundles
+        const result = await medplum.executeBatch(aiNoteData?.content.analysis_details);
+
+        console.log('FHIR Batch Response:', result);
+
+        showNotification({
+          title: 'Success',
+          message: 'Resources updated successfully',
+          color: 'green',
+        });
+
+        // Update local state if needed
+        if (aiNoteData.content.note?.[0]?.text) {
+          setChartNote(aiNoteData.content.note[0].text);
+        }
+      } else {
+        console.error('Invalid AI note data format');
+        showNotification({
+          title: 'Error',
+          message: 'Invalid note format received',
+          color: 'red',
+        });
+      }
+    } catch (error) {
+      console.error('Error processing AI note:', error);
+      showNotification({
+        title: 'Error',
+        message: 'Failed to update resources',
+        color: 'red',
+      });
+    } finally {
+      setIsUpdating(false);
+      setIsAiNoteModalOpen(false);
+    }
+  }, [medplum]);
+
+  useEffect(() => {
+    const handleMessage = (event: MessageEvent) => {
+      // Check if the message is from our iframe
+      if (event.origin === 'http://localhost:5173' && event.data.type === 'ai-note') {
+        console.log("Received AI note:", event.data.content);
+        handleAiNoteSubmit(event.data);
+      }
+    };
+
+    window.addEventListener('message', handleMessage);
+    return () => window.removeEventListener('message', handleMessage);
+  }, [handleAiNoteSubmit]);
+
+  // Add this function to handle coding display
+  const renderCoding = (coding: any) => {
+    if (!coding) return null;
+    if (Array.isArray(coding)) {
+      return coding.map((item, index) => (
+        <Text key={index}>
+          {item.display || item.code || 'Unknown code'}
+        </Text>
+      ));
+    }
+    return <Text>{coding.display || coding.code || 'Unknown code'}</Text>;
+  };
+
   if (!patient || !encounter || !clinicalImpression) {
     return <Loading />;
   }
@@ -346,9 +430,14 @@ export const EncounterChart = (): JSX.Element => {
       return (
         <Stack gap="md">
           <Card withBorder shadow="sm" mt="md">
-            <Text fw={600} size="lg" mb="md">
-              Fill chart note
-            </Text>
+            <Group justify="space-between" mb="md">
+              <Text fw={600} size="lg">
+                Fill chart note
+              </Text>
+              <Button variant="outline" leftSection={<IconRobot size={16} />} onClick={handleAiNoteClick}>
+                AI Note
+              </Button>
+            </Group>
             <Textarea
               defaultValue={clinicalImpression.note?.[0]?.text}
               value={chartNote}
@@ -587,6 +676,26 @@ export const EncounterChart = (): JSX.Element => {
           {renderTabContent()}
           <Outlet />
         </Box>
+
+        <Modal
+          opened={isAiNoteModalOpen}
+          onClose={handleAiNoteClose}
+          size="75%"
+          title="AI Note Generation"
+          centered
+          overlayProps={{
+            backgroundOpacity: 0.55,
+            blur: 3,
+          }}
+        >
+          <iframe
+            src={`http://localhost:5173?patientId=${patientId}&encounterId=${encounterId}&encounterDate=${encounter?.period?.start || new Date().toISOString()}`}
+            style={{ width: '100%', height: '80vh', border: 'none' }}
+            title="AI Note Generator"
+            allow="microphone"
+            sandbox="allow-same-origin allow-scripts allow-forms allow-popups allow-modals"
+          />
+        </Modal>
       </Stack>
     </>
   );

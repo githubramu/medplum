@@ -8,18 +8,23 @@ services:
   postgres:
     image: postgres:16
     restart: always
+    user: "${UID}:${GID}"  # Run the container as the current user
     environment:
       - POSTGRES_USER=medplum
       - POSTGRES_PASSWORD=medplum
     volumes:
       - ./postgres/postgres.conf:/usr/local/etc/postgres/postgres.conf
       - ./postgres/:/docker-entrypoint-initdb.d/
+      - ../medplum_data/postgres:/var/lib/postgresql/data  # Local directory binding
     command: postgres -c config_file=/usr/local/etc/postgres/postgres.conf
     ports:
       - '5432:5432'
   redis:
     image: redis:7
     restart: always
+    user: "${UID}:${GID}"  # Run the container as the current user
     command: redis-server --requirepass medplum
+    volumes:
+      - ../medplum_data/redis:/data  # Local directory binding    
     ports:
       - '6379:6379'
